@@ -1,0 +1,38 @@
+# --- IDE & OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.url
+*.pdf
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Python cache ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Data ---
+data/
+datasets/
+sample-smart-contract-dataset/
+*.zip
+*.jsonl
+
+# --- Vector database ---
+chroma_db/
+faiss_index/
+*.pkl
+*.db
+*.bin
+
+# --- Environment & secrets ---
+.env
+*.key
+*.pem
