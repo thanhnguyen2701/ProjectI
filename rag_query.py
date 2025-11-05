@@ -133,19 +133,27 @@ def answer_question(question: str, top_k: int = TOP_K, filters: Optional[Dict] =
 
 # --- Ví dụ sử dụng ---
 if __name__ == "__main__":
-    # Ví dụ 1: câu hỏi chung, không lọc
-    q1 = "What are common LOW impact vulnerabilities in the dataset?"
-    out1 = answer_question(q1, top_k=6, filters=None)
-    print("ANSWER 1:\n", out1["answer"])
-    print("\nSOURCES:\n")
-    for s in out1["hits"]:
-        print(s)
+    # # Ví dụ 1: câu hỏi chung, không lọc
+    # q1 = "What are common LOW impact vulnerabilities in the dataset?"
+    # out1 = answer_question(q1, top_k=6, filters=None)
+    # print("ANSWER 1:\n", out1["answer"])
+    # print("\nSOURCES:\n")
+    # for s in out1["hits"]:
+    #     print(s)
 
     # Ví dụ 2: filter theo firm + impact
-    q2 = "Summarize findings related to vault expiration issues."
-    filters = {"firm": "Pashov Audit Group", "impact": "LOW"}
-    out2 = answer_question(q2, top_k=6, filters=filters)
-    print("\n\nANSWER 2:\n", out2["answer"])
+    # q2 = "Summarize findings related to vault expiration issues."
+    # filters = {"firm": "Pashov Audit Group", "impact": "LOW"}
+    # out2 = answer_question(q2, top_k=6, filters=filters)
+    # print("\n\nANSWER 2:\n", out2["answer"])
+    # print("\nSOURCES:\n")
+    # for s in out2["hits"]:
+    #     print(s)
+
+    # Câu hỏi thật
+    q3 = "Which protocols were audited by Spearbit and have LOW impact issues?"
+    out3 = answer_question(q3, top_k=15, filters=None)
+    print("ANSWER:\n", out3["answer"])
     print("\nSOURCES:\n")
-    for s in out2["hits"]:
+    for s in out3["hits"]:
         print(s)
