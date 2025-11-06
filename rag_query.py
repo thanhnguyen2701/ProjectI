@@ -1,14 +1,12 @@
-# rag_query.py
 import os
 import chromadb
 from openai import OpenAI
-from chromadb.utils import embedding_functions
 from typing import Optional, Dict, List
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Cấu hình ---
+# Cấu hình
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 os.environ["CHROMA_OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
 CHROMA_DB_PATH = r"C:\Users\FPTSHOP\2025.1\ProjectI\chroma_db"
@@ -16,13 +14,13 @@ COLLECTION_NAME = "smart_contract_audits"
 OPENAI_CHAT_MODEL = "gpt-4o-mini"    # Hoặc thay bằng model bạn muốn/được phép dùng
 TOP_K = 6                            # số chunk lấy về
 
-# --- Khởi tạo ---
+# Khởi tạo
 
 # Chroma client & collection
 client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 collection = client.get_collection(name=COLLECTION_NAME)
 
-# --- Hàm lấy kết quả retrieval từ Chroma ---
+# Hàm lấy kết quả retrieval từ Chroma
 def retrieve(question: str, top_k: int = TOP_K, filters: Optional[Dict] = None):
     """
     Trả về list of hits: [{id, document, metadata, distance}]
@@ -65,7 +63,7 @@ def retrieve(question: str, top_k: int = TOP_K, filters: Optional[Dict] = None):
         })
     return hits
 
-# --- Hàm dựng prompt từ hits + câu hỏi ---
+# Hàm dựng prompt từ hits + câu hỏi
 def build_prompt(question: str, hits: List[Dict], max_context_chars: int = 2500) -> str:
     """
     Gom các đoạn retrieved thành context (cắt nếu quá dài),
@@ -100,7 +98,7 @@ def build_prompt(question: str, hits: List[Dict], max_context_chars: int = 2500)
     )
     return prompt
 
-# --- Hàm gọi OpenAI ChatCompletion ---
+# Hàm gọi OpenAI ChatCompletion
 def ask_llm(prompt: str, model: str = OPENAI_CHAT_MODEL, temperature: float = 0.0, max_tokens: int = 512):
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     response = client.chat.completions.create(
@@ -113,7 +111,7 @@ def ask_llm(prompt: str, model: str = OPENAI_CHAT_MODEL, temperature: float = 0.
         max_tokens=max_tokens
     )
     return response.choices[0].message.content.strip()
-# --- Hàm tiện ích tổng hợp trả lời từ retrieval+LLM ---
+# Hàm tiện ích tổng hợp trả lời từ retrieval+LLM
 def answer_question(question: str, top_k: int = TOP_K, filters: Optional[Dict] = None):
     hits = retrieve(question, top_k=top_k, filters=filters)
     if not hits:
@@ -131,7 +129,7 @@ def answer_question(question: str, top_k: int = TOP_K, filters: Optional[Dict] =
         })
     return {"answer": answer, "hits": cited_ids}
 
-# --- Ví dụ sử dụng ---
+# Ví dụ sử dụng
 if __name__ == "__main__":
     # # Ví dụ 1: câu hỏi chung, không lọc
     # q1 = "What are common LOW impact vulnerabilities in the dataset?"
@@ -150,7 +148,6 @@ if __name__ == "__main__":
     # for s in out2["hits"]:
     #     print(s)
 
-    # Câu hỏi thật
     q3 = "Which protocols were audited by Spearbit and have LOW impact issues?"
     out3 = answer_question(q3, top_k=15, filters=None)
     print("ANSWER:\n", out3["answer"])

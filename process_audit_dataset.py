@@ -1,10 +1,7 @@
 import os, json, re
-from tqdm import tqdm
 
-# 🗂️ Đường dẫn tới thư mục chứa các file JSON
 dataset_dir = r"C:\Users\FPTSHOP\2025.1\ProjectI\sample-smart-contract-dataset"
 
-# 📄 File đầu ra (đặt cùng thư mục cho dễ tìm)
 output_path = os.path.join(dataset_dir, "processed_documents.jsonl")
 
 def clean_markdown(text: str) -> str:
@@ -13,9 +10,9 @@ def clean_markdown(text: str) -> str:
         return ""
     # Xóa liên kết [text](url)
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-    # Xóa các ký hiệu markdown như **bold**, _italic_, `code`
+    # Xóa markdown như **bold**, _italic_, `code`
     text = re.sub(r'[*_`#>]+', '', text)
-    # Chuẩn hóa khoảng trắng
+    # Chuẩn hóa space " "
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -34,7 +31,7 @@ def extract_from_json(data: dict) -> dict:
 
 processed = []
 
-# 🔁 Duyệt toàn bộ file JSON trong thư mục (kể cả thư mục con)
+# Duyệt toàn bộ file JSON trong thư mục (kể cả thư mục con)
 for root, dirs, files in os.walk(dataset_dir):
     for file_name in files:
         if not file_name.endswith(".json"):
@@ -53,11 +50,11 @@ for root, dirs, files in os.walk(dataset_dir):
         except Exception as e:
             print(f"Lỗi đọc {file_name}: {e}")
 
-# 💾 Lưu thành JSONL
+# Lưu thành JSONL
 with open(output_path, "w", encoding="utf-8") as out_f:
     for doc in processed:
         json.dump(doc, out_f, ensure_ascii=False)
         out_f.write("\n")
 
-print(f"✅ Đã xử lý {len(processed)} tài liệu.")
-print(f"📄 File đầu ra: {output_path}")
+print(f"Đã xử lý {len(processed)} tài liệu.")
+print(f"File đầu ra: {output_path}")
