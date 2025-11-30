@@ -1,7 +1,10 @@
 import os
+import json
+from tqdm import tqdm
 import chromadb
 from openai import OpenAI
 from typing import Optional, Dict, List
+import numpy as np
 from dotenv import load_dotenv
 
 # =============== LOAD CONFIG ===============
@@ -9,51 +12,55 @@ load_dotenv()
 os.environ["CHROMA_OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
 CHROMA_DB_PATH = r"C:\Users\FPTSHOP\2025.1\ProjectI\chroma_db"
+TEST_FILE = r"C:\Users\FPTSHOP\2025.1\ProjectI\test_cases.jsonl"
+OUTPUT_FILE = r"C:\Users\FPTSHOP\2025.1\ProjectI\evaluation_results.jsonl"
+
 COLLECTION_NAME = "smart_contract_audits"
 OPENAI_CHAT_MODEL = "gpt-4o-mini"
-TOP_K = 40
-MAX_CONTEXT_CHARS = 8000
+TOP_K = 20
+MAX_CONTEXT_CHARS = 4000
 
 # =============== INIT CLIENTS ===============
 client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 collection = client.get_collection(name=COLLECTION_NAME)
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+embedding_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # =============== RETRIEVAL ===============
 def retrieve(question: str, top_k: int = TOP_K, filters: Optional[Dict] = None):
-    where_clause = None
-    if filters:
-        if len(filters) > 1:
-            where_clause = {"$and": [{k: v} for k, v in filters.items()]}
-        else:
-            key, value = next(iter(filters.items()))
-            where_clause = {key: value}
-
-    result = collection.query(
-        query_texts=[question],
-        n_results=top_k,
-        where=where_clause
-    )
-    ids = result["ids"][0]
-    docs = result["documents"][0]
-    metas = result["metadatas"][0]
-    dists = result.get("distances", [[]])[0]
-
+    queries = [
+        question,
+        f"Analyze Solidity vulnerability: {question}",
+        f"Possible exploits in code: {question}",
+        f"Fix for this Solidity bug: {question}"
+    ]
     hits = []
-    for i, doc in enumerate(docs):
-        hits.append({
-            "id": ids[i],
-            "document": doc,
-            "metadata": metas[i],
-            "distance": dists[i]
-        })
+
+    for q in queries:
+        result = collection.query(query_texts=[q], n_results=top_k, where=filters)
+        for i, doc in enumerate(result["documents"][0]):
+            meta = result["metadatas"][0][i]
+            hits.append({
+                "id": result["ids"][0][i],
+                "document": doc,
+                "metadata": meta,
+                "distance": result["distances"][0][i]
+            })
+
+    # Gộp và sắp theo độ tương đồng
+    seen = {}
+    for h in hits:
+        if h["id"] not in seen or h["distance"] < seen[h["id"]]["distance"]:
+            seen[h["id"]] = h
+    hits = sorted(seen.values(), key=lambda x: x["distance"])[:top_k]
+
     return hits
 
 # =============== PROMPT BUILDER ===============
-def build_prompt(question: str, hits: List[Dict], max_context_chars: int = MAX_CONTEXT_CHARS) -> str:
+def build_prompt_with_context(question: str, hits: List[Dict], max_context_chars: int = MAX_CONTEXT_CHARS) -> (str, str):
     """
-    Gom các đoạn retrieved thành context (cắt nếu quá dài),
-    rồi trả về prompt string cho LLM.
+    Tạo prompt cho LLM, chỉ ẩn answer nhưng đưa đầy đủ context từ hits.
+    Trả về (prompt, context_used)
     """
     context_parts = []
     total_chars = 0
@@ -70,35 +77,35 @@ def build_prompt(question: str, hits: List[Dict], max_context_chars: int = MAX_C
         context_parts.append(part)
         total_chars += len(part)
 
-    context = "\n---\n".join(context_parts)
+    context_used = "\n---\n".join(context_parts)
 
     prompt = f"""
-You are a professional blockchain security auditor assistant.
-You will analyze the provided Solidity code snippet for potential vulnerabilities.
+You are a professional blockchain security auditor.
 
-Use the CONTEXT (findings, examples, and historical vulnerabilities) to identify possible issues.
-Base your reasoning ONLY on the provided context and your own Solidity audit reasoning.
+Analyze the following Solidity code or security finding.
 
-CONTEXT:
-{context}
+CONTEXT (previous smart contract audit findings):
+{context_used}
 
-CODE SNIPPET TO ANALYZE:
+QUESTION (without answer):
 {question}
 
-TASK:
-1. Identify whether the code contains a reentrancy vulnerability (or any other serious issue).
-2. Explain the reasoning clearly and concisely (5–8 sentences).
-3. Provide suggestions on how to fix or mitigate the issue.
-4. Reference relevant findings from the context using [id:...] tags.
-"""
-    return prompt.strip()
+Please provide a detailed vulnerability analysis, explanation, and potential fix based only on the context and your expertise.
 
-# =============== OPENAI CALL ===============
-def ask_llm(prompt: str, model: str = OPENAI_CHAT_MODEL, temperature: float = 0.0, max_tokens: int = 700):
+RESPONSE FORMAT:
+1. Vulnerability Type(s): <short summary>
+2. Explanation: <3–6 sentences explaining the issue>
+3. Fix Suggestion (if any): <code or advice>
+4. References: [id:...] if relevant
+"""
+    return prompt.strip(), context_used
+
+# =============== LLM CALL ===============
+def ask_llm(prompt: str, model: str = OPENAI_CHAT_MODEL, temperature: float = 0.0, max_tokens: int = 600):
     response = openai_client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": "You are a smart-contract security expert."},
+            {"role": "system", "content": "You are an expert Solidity auditor."},
             {"role": "user", "content": prompt}
         ],
         temperature=temperature,
@@ -106,38 +113,95 @@ def ask_llm(prompt: str, model: str = OPENAI_CHAT_MODEL, temperature: float = 0.
     )
     return response.choices[0].message.content.strip()
 
-# =============== MAIN EXECUTION ===============
+# =============== SIMILARITY SCORE ===============
+def embed_text(text: str):
+    """Tạo embedding vector bằng model text-embedding-3-small."""
+    try:
+        resp = embedding_client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text
+        )
+        return np.array(resp.data[0].embedding)
+    except Exception as e:
+        print(f"[!] Embedding error: {e}")
+        return np.zeros(1536)
+
+def similarity_score(text1: str, text2: str) -> float:
+    """Tính cosine similarity giữa hai embedding."""
+    e1, e2 = embed_text(text1), embed_text(text2)
+    if np.linalg.norm(e1) == 0 or np.linalg.norm(e2) == 0:
+        return 0.0
+    sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
+    return round(float(sim), 3)
+
+# =============== MAIN LOOP ===============
 if __name__ == "__main__":
-    # 🧩 👉 Đây là nơi bạn thay đổi code hoặc câu hỏi mỗi lần chạy
-    solidity_code = """
-Does this Solidity code contain a reentrancy vulnerability?
+    print("🚀 Đang chạy đánh giá mô hình RAG trên test_cases.jsonl...\n")
 
-contract Vault {
-    mapping(address => uint) public balances;
+    # --- Load test cases ---
+    test_cases = []
+    with open(TEST_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                test_cases.append(json.loads(line))
+            except:
+                continue
 
-    function deposit() public payable {
-        balances[msg.sender] += msg.value;
-    }
+    print(f"📦 Tổng số test: {len(test_cases)}\n")
 
-    function withdraw(uint amount) public {
-        require(balances[msg.sender] >= amount, "Not enough funds");
-        (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "Transfer failed");
-        balances[msg.sender] -= amount;
-    }
-}
-    """
+    results = []
 
-    # 🔍 Retrieval + Prompt build
-    hits = retrieve(solidity_code, top_k=TOP_K)
-    prompt = build_prompt(solidity_code, hits)
-    answer = ask_llm(prompt)
+    # --- Chạy đánh giá ---
+    for i, case in enumerate(tqdm(test_cases, desc="🔍 Evaluating test cases")):
+        question = case.get("question", "")
 
-    print("\n===================== 🔎 ANALYSIS RESULT =====================\n")
-    print(answer)
-    print("\n==============================================================\n")
+        # ---- Load ground truth (answer or answers[]) ----
+        raw_answer = case.get("answer", "") or case.get("answers", [])
 
-    print("📚 SOURCES (Top context chunks):")
-    for s in hits[:5]:
-        meta = s.get("metadata", {})
-        print(f" - [id:{meta.get('id')}] {meta.get('title', '')} ({meta.get('source', '')})")
+        if isinstance(raw_answer, list):
+            # Gộp tất cả câu trả lời lại
+            ground_truth = "\n".join(raw_answer)
+        elif isinstance(raw_answer, str):
+            ground_truth = raw_answer
+        else:
+            ground_truth = ""
+
+        if not question.strip():
+            continue
+
+        hits = retrieve(question)
+        prompt, context_used = build_prompt_with_context(question, hits)
+        model_answer = ask_llm(prompt)
+        score = similarity_score(model_answer, ground_truth)
+
+        results.append({
+            "id": case.get("id"),
+            "title": case.get("title"),
+            "impact": case.get("impact"),
+            "firm": case.get("firm"),
+            "protocol": case.get("protocol"),
+            "score": score,
+            "model_answer": model_answer,
+            "ground_truth": ground_truth,
+            "context_used": context_used,   # <--- Lưu context
+            "source": case.get("source"),
+        })
+
+        # In nhanh vài kết quả đầu
+        if i < 3:
+            print(f"\n==== Test #{i+1} ====")
+            print(f"Title: {case.get('title')}")
+            print(f"Score: {score}")
+            print(f"Model Answer:\n{model_answer[:500]}...\n")
+            print(f"Ground Truth:\n{ground_truth[:500]}...\n")
+            print(f"Context Used:\n{context_used[:500]}...\n")
+
+    # --- Lưu kết quả ---
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as out:
+        for r in results:
+            json.dump(r, out, ensure_ascii=False)
+            out.write("\n")
+
+    avg_score = sum(r["score"] for r in results) / len(results)
+    print(f"\n✅ Đánh giá hoàn tất. Trung bình similarity: {avg_score:.3f}")
+    print(f"📁 Kết quả chi tiết được lưu tại: {OUTPUT_FILE}")
